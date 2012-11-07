@@ -40,6 +40,7 @@
 #include <stdio.h>
 #include <yaz/mutex.h>
 #include <yaz/oid_db.h>
+#include <yaz/yaz-version.h>
 #ifdef WIN32
 #else
 #include <unistd.h>
@@ -1432,6 +1433,7 @@ int bend_scan(void *handle, bend_scan_rr *rr)
 	struct scan_entry *scan_list;
 	struct scan_entry *buffer;
 	int *step_size = rr->step_size;
+	int scan_list_size = rr->num_entries;
 	int i;
 	char **basenames;
 	SV **temp;
@@ -1525,7 +1527,12 @@ int bend_scan(void *handle, bend_scan_rr *rr)
 	rr->errcode = SvIV(err_code);
 	rr->num_entries = SvIV(number);
 	rr->status = SvIV(status);
+	if (yaz_version(NULL, NULL) >= 0x4022c && rr->num_entries <= scan_list_size) {
+		/* entries has been initialized by yaz and is big enough to hold all entries */
+		scan_list = rr->entries;
+	} else {
         scan_list = (struct scan_entry *) odr_malloc (rr->stream, rr->num_entries * sizeof(*scan_list));
+	}
 	buffer = scan_list;
 	entries = (AV *)SvRV(entries_ref);
 	if (rr->errcode == 0) for (i = 0; i < rr->num_entries; i++)
@@ -1537,6 +1544,14 @@ int bend_scan(void *handle, bend_scan_rr *rr)
 		strcpy(buffer->term, ptr);
 		temp = hv_fetch(scan_item, "OCCURRENCE", 10, 1); 
 		buffer->occurrences = SvIV(*temp);
+		if (hv_exists(scan_item, "DISPLAY_TERM", 12))
+		{
+			temp = hv_fetch(scan_item, "DISPLAY_TERM", 12, 1);
+			ptr = SvPV(*temp, len);
+			buffer->display_term = (char *) odr_malloc (rr->stream, len + 1);
+			strcpy(buffer->display_term, ptr);
+			printf("ss display term: %s\n", buffer->display_term);
+		}
 		buffer++;
 		hv_undef(scan_item);
 	}
