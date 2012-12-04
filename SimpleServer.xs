@@ -1550,7 +1550,6 @@ int bend_scan(void *handle, bend_scan_rr *rr)
 			ptr = SvPV(*temp, len);
 			buffer->display_term = (char *) odr_malloc (rr->stream, len + 1);
 			strcpy(buffer->display_term, ptr);
-			printf("ss display term: %s\n", buffer->display_term);
 		}
 		buffer++;
 		hv_undef(scan_item);
