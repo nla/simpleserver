@@ -1,5 +1,5 @@
 ## This file is part of simpleserver
-## Copyright (C) 2000-2013 Index Data.
+## Copyright (C) 2000-2015 Index Data.
 ## All rights reserved.
 ## Redistribution and use in source and binary forms, with or without
 ## modification, are permitted provided that the following conditions are met:
@@ -36,7 +36,7 @@ require AutoLoader;
 
 @ISA = qw(Exporter AutoLoader DynaLoader);
 @EXPORT = qw( );
-$VERSION = '1.16';
+$VERSION = '1.20';
 
 bootstrap Net::Z3950::SimpleServer $VERSION;
 
@@ -114,12 +114,15 @@ package Net::Z3950::RPN::Or;
 our @ISA = qw(Net::Z3950::RPN::Node);
 package Net::Z3950::RPN::AndNot;
 our @ISA = qw(Net::Z3950::RPN::Node);
+package Net::Z3950::RPN::Prox;
+our @ISA = qw(Net::Z3950::RPN::Node);
 package Net::Z3950::RPN::Term;
 our @ISA = qw(Net::Z3950::RPN::Node);
 package Net::Z3950::RPN::RSID;
 our @ISA = qw(Net::Z3950::RPN::Node);
 package Net::Z3950::RPN::Attributes;
 package Net::Z3950::RPN::Attribute;
+package Net::Z3950::RPN::Prox::Attributes;
 package Net::Z3950::FacetList;
 package Net::Z3950::FacetField;
 package Net::Z3950::FacetTerms;
@@ -144,6 +147,9 @@ sub toPQF {
 	return '@and ' . $this->[0]->toPQF() . ' ' . $this->[1]->toPQF();
     } elsif ($class eq "Net::Z3950::RPN::AndNot") {
 	return '@not ' . $this->[0]->toPQF() . ' ' . $this->[1]->toPQF();
+    } elsif ($class eq "Net::Z3950::RPN::Prox") {
+    my $pattrs = $this->[3];
+	return '@prox ' . $pattrs->{exclusion} . ' ' . $pattrs->{distance} . ' ' . $pattrs->{ordered} . ' ' . $pattrs->{relationType} . (defined $pattrs->{known} ? ' k ' . $pattrs->{known} : ' p ' . $pattrs->{zprivate}) . ' ' . $this->[0]->toPQF() . ' ' . $this->[1]->toPQF();
     } elsif ($class eq "Net::Z3950::RPN::RSID") {
 	return '@set ' . $this->{id};
     } elsif ($class ne "Net::Z3950::RPN::Term") {
@@ -904,13 +910,13 @@ http://search.cpan.org/~esummers/CQL-Parser/
 
 =head1 AUTHORS
 
-Anders Sønderberg (sondberg@indexdata.dk),
+Anders SÃ¸nderberg (sondberg@indexdata.dk),
 Sebastian Hammer (quinn@indexdata.dk),
 Mike Taylor (indexdata.com).
 
 =head1 COPYRIGHT AND LICENCE
 
-Copyright (C) 2000-2013 by Index Data.
+Copyright (C) 2000-2015 by Index Data.
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.8.4 or,

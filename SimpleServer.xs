@@ -1,5 +1,5 @@
 /* This file is part of simpleserver.
- * Copyright (C) 2000-2013 Index Data.
+ * Copyright (C) 2000-2015 Index Data.
  * All rights reserved.
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -92,15 +92,13 @@ PerlInterpreter *root_perl_context;
  */
 char *string_or_undef(SV **svp, ODR stream) {
 	STRLEN len;
-	char *ptr, *buf;
+	char *ptr;
 
 	if (!SvOK(*svp))
 		return 0;
 
 	ptr = SvPV(*svp, len);
-	buf = (char*) odr_malloc(stream, len+1);
-	strcpy(buf, ptr);
-	return buf;
+	return odr_strdupn(stream, ptr, len);
 }
 
 
@@ -197,7 +195,8 @@ Z_GenericRecord *read_grs1(char *str, ODR o)
 
 	original = str;
 	r = (Z_GenericRecord *)odr_malloc(o, sizeof(*r));
-	r->elements = (Z_TaggedElement **) odr_malloc(o, sizeof(Z_TaggedElement*) * GRS_MAX_FIELDS);
+	r->elements = (Z_TaggedElement **)
+		odr_malloc(o, sizeof(Z_TaggedElement*) * GRS_MAX_FIELDS);
 	r->num_elements = 0;
 
 	for (;;)
@@ -242,7 +241,8 @@ Z_GenericRecord *read_grs1(char *str, ODR o)
 			yaz_log(YLOG_WARN, "Max number of GRS-1 elements exceeded [GRS_MAX_FIELDS=%d]", GRS_MAX_FIELDS);
 			exit(0);
 		}
-		r->elements[r->num_elements] = t = (Z_TaggedElement *) odr_malloc(o, sizeof(Z_TaggedElement));
+		r->elements[r->num_elements] = t = (Z_TaggedElement *)
+			odr_malloc(o, sizeof(Z_TaggedElement));
 		t->tagType = odr_intdup(o, type);
 		t->tagValue = (Z_StringOrNumeric *)
 			odr_malloc(o, sizeof(Z_StringOrNumeric));
@@ -259,7 +259,8 @@ Z_GenericRecord *read_grs1(char *str, ODR o)
 		t->tagOccurrence = 0;
 		t->metaData = 0;
 		t->appliedVariant = 0;
-		t->content = c = (Z_ElementData *)odr_malloc(o, sizeof(Z_ElementData));
+		t->content = c = (Z_ElementData *)
+			odr_malloc(o, sizeof(Z_ElementData));
 		if (*buf == '{')
 		{
 			c->which = Z_ElementData_subtree;
@@ -481,7 +482,7 @@ static SV *rpn2perl(Z_RPNStructure *s)
 	case Z_Operator_and:     type = "Net::Z3950::RPN::And";    break;
 	case Z_Operator_or:      type = "Net::Z3950::RPN::Or";     break;
 	case Z_Operator_and_not: type = "Net::Z3950::RPN::AndNot"; break;
-	case Z_Operator_prox:    fatal("proximity not yet supported");
+	case Z_Operator_prox:    type = "Net::Z3950::RPN::Prox"; break;
 	default: fatal("unknown RPN operator %d", (int) c->roperator->which);
 	}
 	sv = newObject(type, (SV*) (av = newAV()));
@@ -491,6 +492,21 @@ static SV *rpn2perl(Z_RPNStructure *s)
 	if ((tmp = rpn2perl(c->s2)) == 0)
 	    return 0;
 	av_push(av, tmp);
+	if (c->roperator->which == Z_Operator_prox) {
+		Z_ProximityOperator prox = *c->roperator->u.prox;
+		HV *hv;
+		tmp = newObject("Net::Z3950::RPN::Prox::Attributes", (SV*) (hv = newHV()));
+		setMember(hv, "exclusion", newSViv(*prox.exclusion));
+		setMember(hv, "distance", newSViv(*prox.distance));
+		setMember(hv, "ordered", newSViv(*prox.ordered));
+		setMember(hv, "relationType", newSViv(*prox.relationType));
+		if (prox.which == Z_ProximityOperator_known) {
+			setMember(hv, "known", newSViv(*prox.u.known));
+		} else {
+			setMember(hv, "zprivate", newSViv(*prox.u.zprivate));
+		}
+		av_push(av, tmp);
+	}
 	return sv;
     }
 
@@ -627,7 +643,6 @@ int bend_sort(void *handle, bend_sort_rr *rr)
         SV *point;
 	STRLEN len;
 	char *ptr;
-	char *ODR_err_str;
 	char **input_setnames;
 	Zfront_handle *zhandle = (Zfront_handle *)handle;
         Z_SortKeySpecList *sort_spec = rr->sort_sequence;
@@ -703,9 +718,7 @@ int bend_sort(void *handle, bend_sort_rr *rr)
 	rr->sort_status = SvIV(status);
 
 	ptr = SvPV(err_str, len);
-	ODR_err_str = (char *)odr_malloc(rr->stream, len + 1);
-	strcpy(ODR_err_str, ptr);
-	rr->errstring = ODR_err_str;
+	rr->errstring = odr_strdupn(rr->stream, ptr, len);
         zhandle->handle = point;
 
 	sv_free(err_code);
@@ -818,9 +831,7 @@ static void f_SV_to_FacetField(HV *facet_field_hv, Z_FacetField **fl, ODR odr)
 	            c->list[0] = (Z_StringOrNumeric *) odr_malloc(odr,
                           sizeof(**c->list));
 	            c->list[0]->which = Z_StringOrNumeric_string;
-		    c->list[0]->u.string = odr_malloc(odr, s_len + 1);
-		    memcpy(c->list[0]->u.string, s_buf, s_len);
-		    c->list[0]->u.string[s_len] = '\0';
+		    c->list[0]->u.string = odr_strdupn(odr, s_buf, s_len);
 		    c->num_semanticAction = 0;
 		    c->semanticAction = 0;
             }
@@ -889,6 +900,18 @@ static void f_SV_to_FacetList(SV *sv, Z_OtherInformation **oip, ODR odr)
 	}
 }
 
+static HV *parse_extra_args(Z_SRW_extra_arg *args)
+{
+	HV *href = newHV();
+
+	for (; args; args = args->next)
+	{
+		hv_store(href, args->name, strlen(args->name),
+			newSVpv(args->value, 0), 0);
+	}
+	return href;
+}
+
 int bend_search(void *handle, bend_search_rr *rr)
 {
 	HV *href;
@@ -902,6 +925,8 @@ int bend_search(void *handle, bend_search_rr *rr)
 	CV* handler_cv = 0;
 	SV *rpnSV;
 	SV *facetSV;
+	char *ptr;
+	STRLEN len;
 
 	dSP;
 	ENTER;
@@ -920,6 +945,7 @@ int bend_search(void *handle, bend_search_rr *rr)
 	}
 #endif
 	href = newHV();
+
 	hv_store(href, "SETNAME", 7, newSVpv(rr->setname, 0), 0);
 	if (rr->srw_sortKeys && *rr->srw_sortKeys)
 	    hv_store(href, "SRW_SORTKEYS", 12, newSVpv(rr->srw_sortKeys, 0), 0);
@@ -932,6 +958,8 @@ int bend_search(void *handle, bend_search_rr *rr)
 	hv_store(href, "HANDLE", 6, zhandle->handle, 0);
 	hv_store(href, "PID", 3, newSViv(getpid()), 0);
 	hv_store(href, "PRESENT_NUMBER", 14, newSViv(rr->present_number), 0);
+	hv_store(href, "EXTRA_ARGS", 10,
+		newRV( (SV*) parse_extra_args(rr->extra_args)), 0);
 	if ((rpnSV = zquery2perl(rr->query)) != 0) {
 	    hv_store(href, "RPN", 3, rpnSV, 0);
 	}
@@ -982,6 +1010,18 @@ int bend_search(void *handle, bend_search_rr *rr)
         if (SvTYPE(*temp) != SVt_NULL)
 	    f_SV_to_FacetList(*temp, &rr->search_info, rr->stream);
 
+	temp = hv_fetch(href, "EXTRA_RESPONSE_DATA", 19, 0);
+	if (temp)
+	{
+		ptr = SvPV(*temp, len);
+		rr->extra_response_data = odr_strdupn(rr->stream, ptr, len);
+	}
+
+	temp = hv_fetch(href, "ESTIMATED" "_HIT_" "COUNT", 19, 0);
+	if (temp)
+	{
+		rr->estimated_hit_count = SvIV(*temp);
+	}
 	hv_undef(href);
 	av_undef(aref);
 
@@ -1074,7 +1114,6 @@ int bend_fetch(void *handle, bend_fetch_rr *rr)
 	HV *href;
 	SV **temp;
 	SV *basename;
-	SV *record;
 	SV *last;
 	SV *err_code;
 	SV *err_string;
@@ -1083,9 +1122,6 @@ int bend_fetch(void *handle, bend_fetch_rr *rr)
 	SV *rep_form;
 	SV *schema = 0;
 	char *ptr;
-	char *ODR_record;
-	char *ODR_basename;
-	char *ODR_errstr;
 	WRBUF oid_dotted;
 	Zfront_handle *zhandle = (Zfront_handle *)handle;
 	CV* handler_cv = 0;
@@ -1118,7 +1154,6 @@ int bend_fetch(void *handle, bend_fetch_rr *rr)
 	hv_store(href, "REQ_FORM", 8, newSVpv((char *)oid_dotted->buf, oid_dotted->pos), 0);
 	hv_store(href, "REP_FORM", 8, newSVpv((char *)oid_dotted->buf, oid_dotted->pos), 0);
 	hv_store(href, "BASENAME", 8, newSVpv("", 0), 0);
-	hv_store(href, "RECORD", 6, newSVpv("", 0), 0);
 	hv_store(href, "LAST", 4, newSViv(0), 0);
 	hv_store(href, "ERR_CODE", 8, newSViv(0), 0);
 	hv_store(href, "ERR_STR", 7, newSVpv("", 0), 0);
@@ -1187,8 +1222,6 @@ int bend_fetch(void *handle, bend_fetch_rr *rr)
 	temp = hv_fetch(href, "BASENAME", 8, 1);
 	basename = newSVsv(*temp);
 
-	temp = hv_fetch(href, "RECORD", 6, 1);
-	record = newSVsv(*temp);
 
 	temp = hv_fetch(href, "LAST", 4, 1);
 	last = newSVsv(*temp);
@@ -1205,26 +1238,20 @@ int bend_fetch(void *handle, bend_fetch_rr *rr)
 	temp = hv_fetch(href, "REP_FORM", 8, 1);
 	rep_form = newSVsv(*temp);
 
-	temp = hv_fetch(href, "SCHEMA", 6, 1);
-	if (temp != 0) {
+	temp = hv_fetch(href, "SCHEMA", 6, 0);
+	if (temp != 0)
+	{
 		schema = newSVsv(*temp);
 		ptr = SvPV(schema, length);
-		if (length > 0) {
-			rr->schema = (char *)odr_malloc(rr->stream, length + 1);
-			strcpy(rr->schema, ptr);
-		}
+		if (length > 0)
+			rr->schema = odr_strdupn(rr->stream, ptr, length);
 	}
 
 	temp = hv_fetch(href, "HANDLE", 6, 1);
 	point = newSVsv(*temp);
 
-
-	hv_undef(href);
-
 	ptr = SvPV(basename, length);
-	ODR_basename = (char *)odr_malloc(rr->stream, length + 1);
-	strcpy(ODR_basename, ptr);
-	rr->basename = ODR_basename;
+	rr->basename = odr_strdupn(rr->stream, ptr, length);
 
 	ptr = SvPV(rep_form, length);
 
@@ -1236,20 +1263,26 @@ int bend_fetch(void *handle, bend_fetch_rr *rr)
 		rr->output_format =
 			odr_oiddup(rr->stream, yaz_oid_recsyn_sutrs);
 	}
-	ptr = SvPV(record, length);
-        /* Treat GRS-1 records separately */
-	if (!oid_oidcmp(rr->output_format, yaz_oid_recsyn_grs_1))
+	temp = hv_fetch(href, "RECORD", 6, 0);
+	if (temp)
 	{
-		rr->record = (char *) read_grs1(ptr, rr->stream);
-		rr->len = -1;
+		SV *record = newSVsv(*temp);
+		ptr = SvPV(record, length);
+        	/* Treat GRS-1 records separately */
+		if (!oid_oidcmp(rr->output_format, yaz_oid_recsyn_grs_1))
+		{
+			rr->record = (char *) read_grs1(ptr, rr->stream);
+			rr->len = -1;
+		}
+		else
+		{
+			rr->record = odr_strdupn(rr->stream, ptr, length);
+			rr->len = length;
+		}
+		sv_free(record);
 	}
-	else
-	{
-		ODR_record = (char *)odr_malloc(rr->stream, length + 1);
-		strcpy(ODR_record, ptr);
-		rr->record = ODR_record;
-		rr->len = length;
-	}
+	hv_undef(href);
+
 	zhandle->handle = point;
 	handle = zhandle;
 	rr->last_in_set = SvIV(last);
@@ -1258,16 +1291,13 @@ int bend_fetch(void *handle, bend_fetch_rr *rr)
 	{
 		rr->errcode = SvIV(err_code);
 		ptr = SvPV(err_string, length);
-		ODR_errstr = (char *)odr_malloc(rr->stream, length + 1);
-		strcpy(ODR_errstr, ptr);
-		rr->errstring = ODR_errstr;
+		rr->errstring = odr_strdupn(rr->stream, ptr, length);
 	}
 	rr->surrogate_flag = SvIV(sur_flag);
 
 	wrbuf_destroy(oid_dotted);
 	sv_free((SV*) href);
 	sv_free(basename);
-	sv_free(record);
 	sv_free(last);
 	sv_free(err_string);
 	sv_free(err_code),
@@ -1296,7 +1326,6 @@ int bend_present(void *handle, bend_present_rr *rr)
 	Z_RecordComposition *composition;
 	Z_ElementSetNames *simple;
 	Z_CompSpec *complex;
-	char *ODR_errstr;
 	char *ptr;
 	Zfront_handle *zhandle = (Zfront_handle *)handle;
 	CV* handler_cv = 0;
@@ -1391,9 +1420,7 @@ int bend_present(void *handle, bend_present_rr *rr)
 	rr->errcode = SvIV(err_code);
 
 	ptr = SvPV(err_string, len);
-	ODR_errstr = (char *)odr_malloc(rr->stream, len + 1);
-	strcpy(ODR_errstr, ptr);
-	rr->errstring = ODR_errstr;
+	rr->errstring = odr_strdupn(rr->stream, ptr, len);
 /*	wrbuf_free(oid_dotted, 1);*/
 	zhandle->handle = point;
 	handle = zhandle;
@@ -1419,7 +1446,6 @@ int bend_scan(void *handle, bend_scan_rr *rr)
 	AV *list;
 	AV *entries;
 	HV *scan_item;
-	struct scan_entry *scan_list;
 	struct scan_entry *buffer;
 	int *step_size = rr->step_size;
 	int scan_list_size = rr->num_entries;
@@ -1432,9 +1458,7 @@ int bend_scan(void *handle, bend_scan_rr *rr)
 	SV *status = sv_newmortal();
 	SV *number = sv_newmortal();
 	char *ptr;
-	char *ODR_errstr;
 	STRLEN len;
-	int term_len;
 	SV *entries_ref;
 	Zfront_handle *zhandle = (Zfront_handle *)handle;
 	CV* handler_cv = 0;
@@ -1453,8 +1477,9 @@ int bend_scan(void *handle, bend_scan_rr *rr)
 
 	if (rr->term->term->which == Z_Term_general)
 	{
-		term_len = rr->term->term->u.general->len;
-		hv_store(href, "TERM", 4, newSVpv((char*) rr->term->term->u.general->buf, term_len), 0);
+		Odr_oct *oterm = rr->term->term->u.general;
+		hv_store(href, "TERM", 4, newSVpv((char*) oterm->buf,
+			oterm->len), 0);
 	} else {
 		rr->errcode = 229;	/* Unsupported term type */
 		return 0;
@@ -1468,6 +1493,8 @@ int bend_scan(void *handle, bend_scan_rr *rr)
 	hv_store(href, "HANDLE", 6, zhandle->handle, 0);
 	hv_store(href, "STATUS", 6, newSViv(BEND_SCAN_SUCCESS), 0);
 	hv_store(href, "ENTRIES", 7, newRV((SV *) list), 0);
+	hv_store(href, "EXTRA_ARGS", 10,
+		newRV( (SV*) parse_extra_args(rr->extra_args)), 0);
         aref = newAV();
         basenames = rr->basenames;
         for (i = 0; i < rr->num_bases; i++)
@@ -1505,45 +1532,42 @@ int bend_scan(void *handle, bend_scan_rr *rr)
 	temp = hv_fetch(href, "ENTRIES", 7, 1);
 	entries_ref = newSVsv(*temp);
 
+	temp = hv_fetch(href, "EXTRA_RESPONSE_DATA", 19, 0);
+	if (temp)
+	{
+		ptr = SvPV(*temp, len);
+		rr->extra_response_data = odr_strdupn(rr->stream, ptr, len);
+	}
+
 	PUTBACK;
 	FREETMPS;
 	LEAVE;
 
 	ptr = SvPV(err_str, len);
-	ODR_errstr = (char *)odr_malloc(rr->stream, len + 1);
-	strcpy(ODR_errstr, ptr);
-	rr->errstring = ODR_errstr;
+	rr->errstring = odr_strdupn(rr->stream, ptr, len);
 	rr->errcode = SvIV(err_code);
 	rr->num_entries = SvIV(number);
 	rr->status = SvIV(status);
-	if (yaz_version(NULL, NULL) >= 0x4022c && rr->num_entries <= scan_list_size) {
-		/* entries has been initialized by yaz and is big enough to hold all entries */
-		scan_list = rr->entries;
-	} else {
-        scan_list = (struct scan_entry *) odr_malloc (rr->stream, rr->num_entries * sizeof(*scan_list));
-	}
-	buffer = scan_list;
+	buffer = rr->entries;
 	entries = (AV *)SvRV(entries_ref);
 	if (rr->errcode == 0) for (i = 0; i < rr->num_entries; i++)
 	{
 		scan_item = (HV *)SvRV(sv_2mortal(av_shift(entries)));
 		temp = hv_fetch(scan_item, "TERM", 4, 1);
 		ptr = SvPV(*temp, len);
-		buffer->term = (char *) odr_malloc (rr->stream, len + 1);
-		strcpy(buffer->term, ptr);
+		buffer->term = odr_strdupn(rr->stream, ptr, len);
 		temp = hv_fetch(scan_item, "OCCURRENCE", 10, 1);
 		buffer->occurrences = SvIV(*temp);
-		if (hv_exists(scan_item, "DISPLAY_TERM", 12))
+		temp = hv_fetch(scan_item, "DISPLAY_TERM", 12, 0);
+		if (temp)
 		{
-			temp = hv_fetch(scan_item, "DISPLAY_TERM", 12, 1);
 			ptr = SvPV(*temp, len);
-			buffer->display_term = (char *) odr_malloc (rr->stream, len + 1);
-			strcpy(buffer->display_term, ptr);
+			buffer->display_term = odr_strdupn(rr->stream, ptr,len);
 		}
 		buffer++;
 		hv_undef(scan_item);
 	}
-	rr->entries = scan_list;
+
 	zhandle->handle = point;
 	handle = zhandle;
 	sv_free(err_code);
@@ -1600,8 +1624,7 @@ int bend_explain(void *handle, bend_explain_rr *q)
 	LEAVE;
 
 	explain = SvPV(explainsv, len);
-	q->explain_buf = (char*) odr_malloc(q->stream, len + 1);
-	strcpy(q->explain_buf, explain);
+	q->explain_buf = odr_strdupn(q->stream, explain, len);
 
         return 0;
 }
@@ -1631,8 +1654,8 @@ bend_initresult *bend_init(bend_initrequest *q)
 	dSP;
 	STRLEN len;
 	NMEM nmem = nmem_create();
-	Zfront_handle *zhandle =  (Zfront_handle *) nmem_malloc (nmem,
-			sizeof(*zhandle));
+	Zfront_handle *zhandle = (Zfront_handle *)
+		nmem_malloc(nmem, sizeof(*zhandle));
 	SV *handle;
 	HV *href;
 	SV **temp;
@@ -1646,7 +1669,7 @@ bend_initresult *bend_init(bend_initrequest *q)
 
         if (sort_ref)
         {
-            q->bend_sort = bend_sort;
+		q->bend_sort = bend_sort;
         }
 	if (search_ref)
 	{
@@ -1657,7 +1680,8 @@ bend_initresult *bend_init(bend_initrequest *q)
 		q->bend_present = bend_present;
 	}
 	/*q->bend_esrequest = bend_esrequest;*/
-	if (delete_ref) {
+	if (delete_ref)
+	{
 		q->bend_delete = bend_delete;
 	}
 	if (fetch_ref)
@@ -1740,8 +1764,7 @@ bend_initresult *bend_init(bend_initrequest *q)
 
 	temp = hv_fetch(href, "ERR_STR", 7, 1);
 	ptr = SvPV(*temp, len);
-	r->errstring = (char *)odr_malloc(q->stream, len + 1);
-	strcpy(r->errstring, ptr);
+	r->errstring = odr_strdupn(q->stream, ptr, len);
 
 	temp = hv_fetch(href, "HANDLE", 6, 1);
 	handle= newSVsv(*temp);

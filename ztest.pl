@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 
 ## This file is part of simpleserver
-## Copyright (C) 2000-2013 Index Data.
+## Copyright (C) 2000-2015 Index Data.
 ## All rights reserved.
 ## Redistribution and use in source and binary forms, with or without
 ## modification, are permitted provided that the following conditions are met:
@@ -70,6 +70,7 @@ sub my_scan_handler {
 	my $term = $args->{TERM};
 	my $entries = [
 				{	TERM		=>	'Number 1',
+					DISPLAY_TERM    =>      'Number .1',
 					OCCURRENCE	=>	10 },
 				{	TERM		=>	'Number 2',
 					OCCURRENCE	=>	8 },
@@ -94,6 +95,7 @@ sub my_scan_handler {
 	$args->{ENTRIES} = $entries;
 	$args->{STATUS} = Net::Z3950::SimpleServer::ScanPartial;
 	print "Welcome to scan....\n";
+	$args->{EXTRA_RESPONSE_DATA} = '<scanextra>b</scanextra>';
 	print "You scanned for term '$term'\n";
 }
 
@@ -132,10 +134,13 @@ sub my_search_handler {
 	print "Setname          : $set_id\n";
 	print " inputfacets:\n";
 	print Dumper($facets);
+        print " extra args:\n";
+        print Dumper($args->{EXTRA_ARGS});
 	print "------------------------------------------------------------\n";
 
 	$args->{OUTPUTFACETS} = $facets;
 
+	$args->{EXTRA_RESPONSE_DATA} = '<searchextra>b</searchextra>';
 	$args->{HITS} = $hits;
 	$session->{$set_id} = $data;
 	$session->{__HITS} = $hits;
